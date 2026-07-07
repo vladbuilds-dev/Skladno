@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Складно · Оптимизатор поставок FBO на Wildberries</title>
+<meta name="description" content="Складно распределяет SKU по складам и датам WB так, чтобы логистика стоила минимум: коэффициенты приёмки, хранение и нелокальные продажи в одной задаче оптимизации.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;500;600&family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/@phosphor-icons/web"></script>
+<style>
+  :root{
+    --bg:#0b0d11;
+    --panel:#12151c;
+    --panel-2:#171b23;
+    --line:rgba(255,255,255,.08);
+    --line-strong:rgba(255,255,255,.14);
+    --text:#e9ebef;
+    --muted:#9aa2ae;
+    --dim:#6b7280;
+    --accent:#4cd68f;
+    --accent-soft:rgba(76,214,143,.12);
+    --accent-line:rgba(76,214,143,.35);
+    --radius:14px;
+    --display:'Unbounded',sans-serif;
+    --body:'Golos Text',sans-serif;
+    --mono:'JetBrains Mono',monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--body);
+    font-size:16px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--accent);color:#0b0d11}
+  a{color:inherit;text-decoration:none}
+  img{max-width:100%;display:block}
+  .wrap{max-width:1200px;margin:0 auto;padding:0 24px}
+
+  h1,h2{font-family:var(--display);font-weight:500;letter-spacing:-.01em;line-height:1.15}
+  h1{font-size:clamp(1.7rem,3.6vw,2.9rem)}
+  h2{font-size:clamp(1.35rem,2.6vw,2.05rem)}
+  .sub{color:var(--muted);max-width:56ch}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* ---------- nav ---------- */
+  header{
+    position:sticky;top:0;z-index:50;
+    background:rgba(11,13,17,.82);
+    backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    border-bottom:1px solid var(--line);
+  }
+  .nav{height:68px;display:flex;align-items:center;justify-content:space-between;gap:24px}
+  .logo{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:500;font-size:1.05rem}
+  .logo svg{display:block}
+  .nav-links{display:flex;gap:28px;font-size:.92rem;color:var(--muted)}
+  .nav-links a{transition:color .2s}
+  .nav-links a:hover{color:var(--text)}
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    font-family:var(--body);font-weight:600;font-size:.95rem;
+    padding:12px 22px;border-radius:var(--radius);
+    border:1px solid transparent;cursor:pointer;white-space:nowrap;
+    transition:transform .15s,background .2s,border-color .2s,color .2s;
+  }
+  .btn:active{transform:translateY(1px) scale(.98)}
+  .btn-primary{background:var(--accent);color:#08110c}
+  .btn-primary:hover{background:#5fe3a0}
+  .btn-ghost{border-color:var(--line-strong);color:var(--text)}
+  .btn-ghost:hover{border-color:var(--accent-line);color:var(--accent)}
+  .nav .btn{padding:10px 18px;font-size:.9rem}
+
+  /* ---------- hero ---------- */
+  .hero{padding:72px 0 88px}
+  .hero-grid{display:grid;grid-template-columns:1.02fr .98fr;gap:56px;align-items:center}
+  .hero h1{margin-bottom:20px}
+  .hero h1 em{font-style:normal;color:var(--accent)}
+  .hero .sub{font-size:1.08rem;margin-bottom:32px}
+  .hero-ctas{display:flex;gap:14px;flex-wrap:wrap}
+
+  /* live plan widget */
+  .plan{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:22px 22px 18px;
+    box-shadow:0 24px 60px rgba(0,0,0,.35);
+  }
+  .plan-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+  .plan-title{font-weight:600;font-size:.95rem}
+  .plan-note{font-size:.75rem;color:var(--dim)}
+  .plan-toggle{display:flex;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius);padding:3px;margin-bottom:18px}
+  .plan-toggle button{
+    flex:1;border:0;background:transparent;color:var(--muted);
+    font-family:var(--body);font-weight:600;font-size:.85rem;
+    padding:9px 10px;border-radius:calc(var(--radius) - 4px);cursor:pointer;
+    transition:background .2s,color .2s;
+  }
+  .plan-toggle button.on{background:var(--accent);color:#08110c}
+  .wh-row{display:grid;grid-template-columns:118px 1fr 74px 62px;gap:10px;align-items:center;padding:7px 0;font-size:.84rem}
+  .wh-name{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wh-bar{height:8px;background:var(--panel-2);border-radius:4px;overflow:hidden}
+  .wh-bar i{
+    display:block;height:100%;background:var(--accent);border-radius:4px;
+    transform-origin:left center;transform:scaleX(0);
+    transition:transform .6s cubic-bezier(.16,1,.3,1);
+  }
+  .wh-units{text-align:right;color:var(--text);font-size:.8rem}
+  .wh-k{text-align:right;color:var(--dim);font-size:.8rem}
+  .wh-k.hot{color:#e0836f}
+  .plan-costs{border-top:1px solid var(--line);margin-top:14px;padding-top:12px;display:grid;gap:6px}
+  .cost-row{display:flex;justify-content:space-between;font-size:.87rem;color:var(--muted)}
+  .cost-row b{color:var(--text);font-weight:500}
+  .cost-total{display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--line);margin-top:8px;padding-top:12px}
+  .cost-total span{font-size:.9rem;color:var(--muted)}
+  .cost-total strong{font-size:1.35rem;font-weight:600}
+  .plan-save{
+    margin-top:12px;padding:10px 14px;border-radius:calc(var(--radius) - 4px);
+    background:var(--accent-soft);border:1px solid var(--accent-line);
+    color:var(--accent);font-size:.86rem;font-weight:600;text-align:center;
+    opacity:0;transition:opacity .4s;
+  }
+  .plan-save.show{opacity:1}
+
+  /* ---------- stats strip ---------- */
+  .stats{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--panel)}
+  .stats-grid{display:grid;grid-template-columns:repeat(3,1fr);}
+  .stat{padding:34px 28px;border-left:1px solid var(--line)}
+  .stat:first-child{border-left:0}
+  .stat b{display:block;font-family:var(--mono);font-weight:500;font-size:2rem;color:var(--accent);margin-bottom:6px}
+  .stat span{color:var(--muted);font-size:.92rem}
+
+  /* ---------- sections ---------- */
+  section{padding:96px 0}
+  .sec-head{margin-bottom:48px}
+  .sec-head .sub{margin-top:14px}
+
+  /* problem bento */
+  .bento{display:grid;grid-template-columns:1.4fr 1fr;grid-template-rows:auto auto;gap:16px}
+  .cell{
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:30px;display:flex;flex-direction:column;justify-content:flex-end;gap:10px;
+  }
+  .cell.big{grid-row:span 2;justify-content:space-between;background:linear-gradient(160deg,var(--panel-2),var(--panel) 60%)}
+  .cell .k{font-family:var(--mono);font-size:2.4rem;font-weight:500;color:var(--accent);line-height:1}
+  .cell.big .k{font-size:3.6rem}
+  .cell h3{font-family:var(--body);font-weight:600;font-size:1.05rem}
+  .cell p{color:var(--muted);font-size:.94rem}
+
+  /* how it works */
+  .flow{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .step{padding:32px 26px;background:var(--panel);border-left:1px solid var(--line);position:relative}
+  .step:first-child{border-left:0}
+  .step i.ph{font-size:1.6rem;color:var(--accent);display:block;margin-bottom:16px}
+  .step h3{font-family:var(--body);font-weight:600;font-size:1rem;margin-bottom:8px}
+  .step p{color:var(--muted);font-size:.9rem}
+
+  /* comparison */
+  .versus{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:stretch}
+  .vs-col{border:1px solid var(--line);border-radius:var(--radius);padding:34px;background:var(--panel)}
+  .vs-col.us{border-color:var(--accent-line);background:linear-gradient(170deg,rgba(76,214,143,.06),var(--panel) 55%)}
+  .vs-col h3{font-family:var(--display);font-weight:500;font-size:1.1rem;margin-bottom:6px}
+  .vs-col .who{color:var(--dim);font-size:.85rem;margin-bottom:22px}
+  .vs-col ul{list-style:none;display:grid;gap:14px}
+  .vs-col li{display:flex;gap:12px;align-items:flex-start;color:var(--muted);font-size:.95rem}
+  .vs-col li i{flex:none;margin-top:3px;font-size:1.05rem;color:var(--dim)}
+  .vs-col.us li{color:var(--text)}
+  .vs-col.us li i{color:var(--accent)}
+  .vs-note{margin-top:20px;padding-top:20px;border-top:1px solid var(--line);color:var(--dim);font-size:.85rem}
+
+  /* pricing */
+  .plans{display:grid;grid-template-columns:1fr 1.12fr 1fr;gap:16px;align-items:stretch}
+  .price-card{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);padding:34px;display:flex;flex-direction:column}
+  .price-card.hot{border-color:var(--accent-line);background:linear-gradient(180deg,rgba(76,214,143,.07),var(--panel) 45%)}
+  .price-card h3{font-family:var(--body);font-weight:600;font-size:1.05rem;margin-bottom:4px}
+  .price-card .for{color:var(--dim);font-size:.88rem;margin-bottom:22px}
+  .price{font-family:var(--mono);font-size:2rem;font-weight:500;margin-bottom:2px}
+  .price small{font-size:.9rem;color:var(--dim);font-family:var(--body)}
+  .price-card ul{list-style:none;margin:22px 0 28px;display:grid;gap:10px;flex:1}
+  .price-card li{display:flex;gap:10px;color:var(--muted);font-size:.92rem}
+  .price-card li i{color:var(--accent);margin-top:3px;flex:none}
+  .early{
+    margin-top:44px;text-align:center;color:var(--muted);font-size:.95rem;
+    border:1px dashed var(--line-strong);border-radius:var(--radius);padding:18px 24px;
+  }
+  .early b{color:var(--accent);font-weight:600}
+
+  /* CTA */
+  .cta{background:var(--panel);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .cta-inner{max-width:640px;margin:0 auto;text-align:center}
+  .cta h2{margin-bottom:16px}
+  .cta .sub{margin:0 auto 34px}
+  .cta-form{display:flex;gap:12px;max-width:520px;margin:0 auto;text-align:left}
+  .field{flex:1}
+  .field input{
+    width:100%;background:var(--panel-2);border:1px solid var(--line-strong);
+    border-radius:var(--radius);color:var(--text);font-family:var(--body);font-size:.95rem;
+    padding:13px 16px;outline:none;transition:border-color .2s;
+  }
+  .field input::placeholder{color:var(--dim)}
+  .field input:focus{border-color:var(--accent-line)}
+  .field .err{display:none;color:#e0836f;font-size:.8rem;margin-top:6px}
+  .field.invalid input{border-color:#b45f4d}
+  .field.invalid .err{display:block}
+  .cta-done{
+    display:none;max-width:520px;margin:0 auto;padding:16px 20px;
+    border:1px solid var(--accent-line);background:var(--accent-soft);
+    border-radius:var(--radius);color:var(--accent);font-weight:600;font-size:.95rem;
+  }
+  .cta-fine{margin-top:18px;color:var(--dim);font-size:.83rem}
+
+  footer{padding:36px 0;color:var(--dim);font-size:.85rem}
+  .foot{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:center}
+
+  /* reveal */
+  .rv{opacity:0;transform:translateY(22px);transition:opacity .7s cubic-bezier(.16,1,.3,1),transform .7s cubic-bezier(.16,1,.3,1)}
+  .rv.in{opacity:1;transform:none}
+
+  @media (prefers-reduced-motion: reduce){
+    html{scroll-behavior:auto}
+    .rv{opacity:1;transform:none;transition:none}
+    .wh-bar i{transition:none}
+    .btn,.plan-toggle button{transition:none}
+  }
+
+  @media (max-width: 960px){
+    .hero-grid{grid-template-columns:1fr;gap:44px}
+    .flow{grid-template-columns:1fr 1fr}
+    .step{border-top:1px solid var(--line)}
+    .step:nth-child(-n+2){border-top:0}
+    .step:nth-child(odd){border-left:0}
+    .plans{grid-template-columns:1fr}
+  }
+  @media (max-width: 768px){
+    section{padding:64px 0}
+    .nav-links{display:none}
+    .hero{padding:48px 0 64px}
+    .stats-grid{grid-template-columns:1fr}
+    .stat{border-left:0;border-top:1px solid var(--line)}
+    .stat:first-child{border-top:0}
+    .bento{grid-template-columns:1fr}
+    .cell.big{grid-row:auto}
+    .versus{grid-template-columns:1fr}
+    .flow{grid-template-columns:1fr}
+    .step{border-left:0;border-top:1px solid var(--line)}
+    .step:first-child{border-top:0}
+    .cta-form{flex-direction:column}
+    .wh-row{grid-template-columns:92px 1fr 62px 52px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="logo" href="#">
+      <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+        <rect x="1" y="15" width="24" height="10" rx="3" fill="#4cd68f"/>
+        <rect x="4.5" y="8" width="17" height="5.5" rx="2" fill="#4cd68f" opacity=".55"/>
+        <rect x="8" y="1.5" width="10" height="5" rx="2" fill="#4cd68f" opacity=".3"/>
+      </svg>
+      Складно
+    </a>
+    <nav class="nav-links">
+      <a href="#problema">Проблема</a>
+      <a href="#metod">Метод</a>
+      <a href="#sravnenie">Сравнение</a>
+      <a href="#tarify">Тарифы</a>
+    </nav>
+    <a class="btn btn-primary" href="#plan">Получить план</a>
+  </div>
+</header>
+
+<main>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="rv">
+        <h1>Поставки на FBO без переплат за коэффициенты <em>и хранение</em></h1>
+        <p class="sub">Складно распределяет SKU по складам и датам Wildberries так, чтобы логистика стоила минимум, а товар не уходил в дефицит.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary" href="#plan">Получить план</a>
+          <a class="btn btn-ghost" href="#metod">Как это работает</a>
+        </div>
+      </div>
+
+      <div class="rv">
+        <div class="plan" id="planWidget">
+          <div class="plan-head">
+            <div class="plan-title">Поставка: 2 400 шт, 5 SKU</div>
+            <div class="plan-note">пример расчёта</div>
+          </div>
+          <div class="plan-toggle" role="tablist" aria-label="Сценарий распределения">
+            <button type="button" data-mode="manual" class="on">Как обычно</button>
+            <button type="button" data-mode="opt">Складно</button>
+          </div>
+          <div id="whRows"></div>
+          <div class="plan-costs">
+            <div class="cost-row"><span>Приёмка (коэффициенты)</span><b class="num" data-cost="priem">0 ₽</b></div>
+            <div class="cost-row"><span>Хранение, 30 дней</span><b class="num" data-cost="store">0 ₽</b></div>
+            <div class="cost-row"><span>Надбавка за нелокальность</span><b class="num" data-cost="local">0 ₽</b></div>
+            <div class="cost-total">
+              <span>Логистика итого</span>
+              <strong class="num" data-cost="total">0 ₽</strong>
+            </div>
+          </div>
+          <div class="plan-save" id="saveBadge">Экономия 77 000 ₽ за одну поставку (21%)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STATS -->
+  <div class="stats rv">
+    <div class="wrap stats-grid">
+      <div class="stat"><b>15-20%</b><span>логистического бюджета экономят продавцы, которые планируют поставки по коэффициентам</span></div>
+      <div class="stat"><b>200+ SKU</b><span>решаются одной задачей: бюджет, вместимость фуры, календарь складов, тарифы хранения</span></div>
+      <div class="stat"><b>1 день</b><span>от выгрузки продаж до готового плана поставки в формате загрузки Wildberries</span></div>
+    </div>
+  </div>
+
+  <!-- PROBLEM -->
+  <section id="problema">
+    <div class="wrap">
+      <div class="sec-head rv">
+        <h2>Приёмка превратилась в аукцион</h2>
+        <p class="sub">Коэффициенты складов меняются каждый день. Планирование поставки стало охотой за слотами, а цена ошибки выросла в разы.</p>
+      </div>
+      <div class="bento">
+        <div class="cell big rv">
+          <div class="k">×6</div>
+          <div>
+            <h3>Динамический коэффициент приёмки</h3>
+            <p>От бесплатной приёмки до шестикратной надбавки в зависимости от загрузки склада. В пиковые периоды бесплатных слотов практически нет: кто не считает календарь коэффициентов, тот платит по верхней планке.</p>
+          </div>
+        </div>
+        <div class="cell rv">
+          <div class="k">2,5%</div>
+          <h3>Надбавка за нелокальные продажи</h3>
+          <p>С марта WB берёт до 2,5% от розничной цены, если покупатель далеко от склада с товаром. География распределения теперь напрямую влияет на маржу.</p>
+        </div>
+        <div class="cell rv">
+          <div class="k">±30%</div>
+          <h3>Цена ошибки в объёме</h3>
+          <p>Недопоставили: товар падает в выдаче и теряет выручку. Перепоставили: платите за хранение и замораживаете оборотный капитал.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW -->
+  <section id="metod">
+    <div class="wrap">
+      <div class="sec-head rv">
+        <h2>От ключа API до готового плана</h2>
+        <p class="sub">Никаких ботов для захвата слотов. Только официальный API Wildberries, прогноз спроса и честная математика.</p>
+      </div>
+      <div class="flow rv">
+        <div class="step">
+          <i class="ph ph-plugs-connected"></i>
+          <h3>Подключение</h3>
+          <p>Ключ API WB или выгрузка продаж. Подтягиваем остатки, заказы, тарифы и календарь коэффициентов.</p>
+        </div>
+        <div class="step">
+          <i class="ph ph-chart-line-up"></i>
+          <h3>Прогноз спроса</h3>
+          <p>По каждому SKU и региону, с поправкой на сезонность и периоды отсутствия товара.</p>
+        </div>
+        <div class="step">
+          <i class="ph ph-function"></i>
+          <h3>Оптимизация</h3>
+          <p>Смешанно-целочисленная модель находит план с минимальной стоимостью логистики при ваших ограничениях.</p>
+        </div>
+        <div class="step">
+          <i class="ph ph-file-xls"></i>
+          <h3>План поставки</h3>
+          <p>Что, сколько, на какой склад и на какую дату. Файл в формате загрузки WB.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COMPARISON -->
+  <section id="sravnenie">
+    <div class="wrap">
+      <div class="sec-head rv">
+        <h2>Аналитика считает по одному SKU. Складно решает задачу целиком</h2>
+      </div>
+      <div class="versus">
+        <div class="vs-col rv">
+          <h3>Калькуляторы поставок</h3>
+          <div class="who">аналитические сервисы и Excel продавца</div>
+          <ul>
+            <li><i class="ph ph-minus"></i>Средние дневные продажи и страховой запас по формуле, для каждого SKU отдельно</li>
+            <li><i class="ph ph-minus"></i>Склады выбираются по географии заказов, без учёта коэффициентов на даты</li>
+            <li><i class="ph ph-minus"></i>Бюджет закупки и вместимость фуры остаются за скобками</li>
+            <li><i class="ph ph-minus"></i>Ручная сборка ломается уже на 100+ SKU</li>
+          </ul>
+          <div class="vs-note">Арифметика: каждый расчёт верен по отдельности, но вместе они не складываются в лучший план.</div>
+        </div>
+        <div class="vs-col us rv">
+          <h3>Складно</h3>
+          <div class="who">оптимизатор распределения поставок</div>
+          <ul>
+            <li><i class="ph ph-check"></i>Все SKU, бюджет, фура, календарь коэффициентов и тарифы хранения в одной задаче</li>
+            <li><i class="ph ph-check"></i>Надбавка за нелокальность и индекс локализации учтены в целевой функции</li>
+            <li><i class="ph ph-check"></i>План максимизирует прибыль, а не просто закрывает остатки</li>
+            <li><i class="ph ph-check"></i>Изменились правила WB: модель получает новые параметры, а не переписывается</li>
+          </ul>
+          <div class="vs-note">Оптимизация: хороший ответ здесь равен прямым деньгам, и его нельзя получить в столбик.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRICING -->
+  <section id="tarify">
+    <div class="wrap">
+      <div class="sec-head rv">
+        <h2>Тарифы</h2>
+        <p class="sub">Для продавца с оборотом 3-10 млн ₽ в месяц экономия на логистике составляет 50-300 тыс. ₽. Тариф окупается первой поставкой.</p>
+      </div>
+      <div class="plans">
+        <div class="price-card rv">
+          <h3>Старт</h3>
+          <div class="for">до 50 SKU</div>
+          <div class="price num">4 900 ₽ <small>/ мес</small></div>
+          <ul>
+            <li><i class="ph ph-check"></i>План поставок по всем складам WB</li>
+            <li><i class="ph ph-check"></i>Прогноз спроса по регионам</li>
+            <li><i class="ph ph-check"></i>Файл в формате загрузки WB</li>
+          </ul>
+          <a class="btn btn-ghost" href="#plan">Выбрать</a>
+        </div>
+        <div class="price-card hot rv">
+          <h3>Рост</h3>
+          <div class="for">до 300 SKU</div>
+          <div class="price num">9 900 ₽ <small>/ мес</small></div>
+          <ul>
+            <li><i class="ph ph-check"></i>Всё из тарифа Старт</li>
+            <li><i class="ph ph-check"></i>Ограничения: бюджет закупки, фура, минимальные партии</li>
+            <li><i class="ph ph-check"></i>Надбавка за нелокальность в модели</li>
+            <li><i class="ph ph-check"></i>Приоритетная поддержка в Telegram</li>
+          </ul>
+          <a class="btn btn-primary" href="#plan">Выбрать</a>
+        </div>
+        <div class="price-card rv">
+          <h3>Профи</h3>
+          <div class="for">без ограничений по SKU</div>
+          <div class="price num">19 900 ₽ <small>/ мес</small></div>
+          <ul>
+            <li><i class="ph ph-check"></i>Всё из тарифа Рост</li>
+            <li><i class="ph ph-check"></i>Сценарное планирование «что если»</li>
+            <li><i class="ph ph-check"></i>Несколько кабинетов WB</li>
+          </ul>
+          <a class="btn btn-ghost" href="#plan">Выбрать</a>
+        </div>
+      </div>
+      <div class="early rv">Первым 10 клиентам: <b>скидка 50% на 6 месяцев</b> в обмен на доступ к данным и совместный кейс с цифрами.</div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta" id="plan">
+    <div class="wrap cta-inner rv">
+      <h2>Завтра у вас будет план</h2>
+      <p class="sub">Пришлите ключ API WB или выгрузку продаж. Завтра получите оптимизированный план поставки в формате загрузки Wildberries.</p>
+      <form class="cta-form" id="leadForm" novalidate>
+        <div class="field">
+          <input type="text" id="leadContact" name="contact" placeholder="Telegram или e-mail" autocomplete="email" aria-label="Telegram или e-mail">
+          <div class="err">Укажите Telegram или e-mail, чтобы мы могли ответить.</div>
+        </div>
+        <button class="btn btn-primary" type="submit">Получить план</button>
+      </form>
+      <div class="cta-done" id="leadDone">Заявка принята. Напишем вам в течение рабочего дня.</div>
+      <div class="cta-fine">Первый план: 3 000 ₽, без подписки. Понравится результат: перейдёте на тариф.</div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <div>© 2026 Складно. Оптимизатор распределения поставок FBO.</div>
+    <div>Работаем только с официальным API Wildberries</div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---- scroll reveal ---- */
+  var els = document.querySelectorAll('.rv');
+  if (reduce || !('IntersectionObserver' in window)) {
+    els.forEach(function(el){ el.classList.add('in'); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, {threshold:.18});
+    els.forEach(function(el){ io.observe(el); });
+  }
+
+  /* ---- live plan widget (все цифры: пример расчёта) ---- */
+  var scenarios = {
+    manual: {
+      rows: [
+        {name:'Коледино',     units:2400, k:'×5', hot:true},
+        {name:'Казань',       units:0,    k:'×0'},
+        {name:'Электросталь', units:0,    k:'×1'},
+        {name:'Краснодар',    units:0,    k:'×0'},
+        {name:'Невинномысск', units:0,    k:'×1'}
+      ],
+      costs: {priem:186400, store:84300, local:96200, total:366900},
+      save: false
+    },
+    opt: {
+      rows: [
+        {name:'Коледино',     units:640, k:'×2'},
+        {name:'Казань',       units:520, k:'×0'},
+        {name:'Электросталь', units:480, k:'×1'},
+        {name:'Краснодар',    units:420, k:'×0'},
+        {name:'Невинномысск', units:340, k:'×1'}
+      ],
+      costs: {priem:131200, store:89800, local:68900, total:289900},
+      save: true
+    }
+  };
+  var MAX = 2400;
+  var rowsBox = document.getElementById('whRows');
+  var saveBadge = document.getElementById('saveBadge');
+  var costEls = {};
+  ['priem','store','local','total'].forEach(function(key){
+    costEls[key] = document.querySelector('[data-cost="'+key+'"]');
+  });
+
+  scenarios.manual.rows.forEach(function(r, i){
+    var row = document.createElement('div');
+    row.className = 'wh-row';
+    row.innerHTML =
+      '<span class="wh-name">'+r.name+'</span>' +
+      '<span class="wh-bar"><i data-bar="'+i+'"></i></span>' +
+      '<span class="wh-units num" data-units="'+i+'"></span>' +
+      '<span class="wh-k num" data-k="'+i+'"></span>';
+    rowsBox.appendChild(row);
+  });
+
+  function fmt(n){ return n.toLocaleString('ru-RU') + ' ₽'; }
+
+  var current = {priem:0, store:0, local:0, total:0};
+  function animateCosts(target){
+    if (reduce) {
+      Object.keys(target).forEach(function(k){
+        current[k] = target[k];
+        costEls[k].textContent = fmt(target[k]);
+      });
+      return;
+    }
+    var from = Object.assign({}, current);
+    var t0 = performance.now(), dur = 550;
+    function tick(t){
+      var p = Math.min(1, (t - t0) / dur);
+      var e = 1 - Math.pow(1 - p, 3);
+      Object.keys(target).forEach(function(k){
+        var v = Math.round(from[k] + (target[k] - from[k]) * e);
+        costEls[k].textContent = fmt(v);
+      });
+      if (p < 1) requestAnimationFrame(tick);
+      else Object.keys(target).forEach(function(k){ current[k] = target[k]; });
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function render(mode){
+    var s = scenarios[mode];
+    s.rows.forEach(function(r, i){
+      var bar = document.querySelector('[data-bar="'+i+'"]');
+      bar.style.transform = 'scaleX(' + (r.units / MAX) + ')';
+      document.querySelector('[data-units="'+i+'"]').textContent = r.units ? r.units.toLocaleString('ru-RU') + ' шт' : '·';
+      var kEl = document.querySelector('[data-k="'+i+'"]');
+      kEl.textContent = r.units ? 'коэф ' + r.k : '';
+      kEl.classList.toggle('hot', !!r.hot && !!r.units);
+    });
+    animateCosts(s.costs);
+    saveBadge.classList.toggle('show', s.save);
+  }
+
+  var toggles = document.querySelectorAll('.plan-toggle button');
+  toggles.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      toggles.forEach(function(b){ b.classList.remove('on'); });
+      btn.classList.add('on');
+      render(btn.dataset.mode);
+    });
+  });
+
+  render('manual');
+  /* авто-демо: через 2.5с после появления в кадре переключаем на оптимизацию */
+  if (!reduce) {
+    var demoDone = false;
+    var wio = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting && !demoDone) {
+          demoDone = true;
+          setTimeout(function(){
+            toggles[1].click();
+          }, 2200);
+          wio.disconnect();
+        }
+      });
+    }, {threshold:.5});
+    wio.observe(document.getElementById('planWidget'));
+  }
+
+  /* ---- lead form ---- */
+  var form = document.getElementById('leadForm');
+  var field = form.querySelector('.field');
+  var input = document.getElementById('leadContact');
+  form.addEventListener('submit', function(ev){
+    ev.preventDefault();
+    var v = input.value.trim();
+    var ok = v.length > 2 && (v.indexOf('@') >= 0 || v.length >= 5);
+    if (!ok) { field.classList.add('invalid'); input.focus(); return; }
+    field.classList.remove('invalid');
+    form.style.display = 'none';
+    document.getElementById('leadDone').style.display = 'block';
+  });
+  input.addEventListener('input', function(){ field.classList.remove('invalid'); });
+})();
+</script>
+
+</body>
+</html>
